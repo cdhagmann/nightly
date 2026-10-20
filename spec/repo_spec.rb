@@ -19,6 +19,19 @@ RSpec.describe Repo do
     end
   end
 
+  describe ".from_api" do
+    it "records the stars gained and escapes the description" do
+      repo = Repo.from_api({"description" => "<b>hi</b>", "stargazers_count" => 9}, 4)
+
+      expect(repo.new_stargazers_count).to eq 4
+      expect(repo.description).to eq "&lt;b&gt;hi&lt;/b&gt;"
+    end
+
+    it "copes with a missing description" do
+      expect(Repo.from_api({}, 1).description).to eq ""
+    end
+  end
+
   describe "#classy_description" do
     it "does nothing if the description is already classy" do
       original = "<img src='/images/emoji/unicode/26a1.png'/> Lodash inspired JSDoc 3 template / theme"

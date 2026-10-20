@@ -10,7 +10,11 @@ class Repo < Hashie::Mash
   OBSCENITY_SUBSTRING_MIN = 5
 
   def self.from_github url, stars_count
-    repo = new JSON.load open(url, "Authorization" => %{token #{ENV["GITHUB_TOKEN"]}})
+    from_api JSON.load(open(url, "Authorization" => %{token #{ENV["GITHUB_TOKEN"]}})), stars_count
+  end
+
+  def self.from_api hash, stars_count
+    repo = new hash
     repo.new_stargazers_count = stars_count
     repo.description = (repo.description || "").html_escape
     repo
@@ -90,6 +94,7 @@ class Repo < Hashie::Mash
   # Why this repo shouldn't be listed, or nil when it should be.
   def rejection_reason
     return "blocked" if blocked?
+    return "malware url" if url.to_s.malware? # owner and repo name, as in the API url
     return "malware" if malware? # run it again now that we have more info
     return "description too short" if description_too_short?
     return "description too long" if description_too_long?

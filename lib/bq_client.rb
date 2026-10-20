@@ -16,10 +16,6 @@ class BqClient
     response_to_repo_list bq.query(top_all_sql), limit, max_lookups
   end
 
-  def top_new limit=15, max_lookups=200
-    response_to_repo_list bq.query(top_new_sql), limit, max_lookups
-  end
-
   private
 
   def default_client
@@ -78,33 +74,6 @@ class BqClient
     WHERE type="WatchEvent"
     GROUP BY repo.id, repo.name, repo.url
     HAVING count >= 50
-    ORDER BY count DESC
-    LIMIT 1000
-    SQL
-  end
-
-  def top_new_sql
-    <<-SQL
-    SELECT repo.url, COUNT(repo.name) AS count FROM
-    TABLE_DATE_RANGE([githubarchive:day.],
-      TIMESTAMP("#{day}"),
-      TIMESTAMP("#{day}")
-    )
-    WHERE type="WatchEvent"
-    AND repo.url IN (
-      SELECT repo.url FROM (
-        SELECT repo.url,
-          JSON_EXTRACT(payload, '$.ref_type') AS ref_type,
-        FROM (TABLE_DATE_RANGE([githubarchive:day.],
-          TIMESTAMP("#{day}"),
-          TIMESTAMP("#{day}")
-        ))
-        WHERE type IN ("CreateEvent", "PublicEvent")
-      )
-      WHERE ref_type='"repository"' OR ref_type IS NULL # PublicEvent has no ref_type
-    )
-    GROUP BY repo.id, repo.name, repo.url
-    HAVING count >= 10
     ORDER BY count DESC
     LIMIT 1000
     SQL
