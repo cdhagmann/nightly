@@ -7,6 +7,8 @@ require "open-uri"
 require_relative "./core_ext/string"
 
 class Repo < Hashie::Mash
+  OBSCENITY_SUBSTRING_MIN = 5
+
   def self.from_github url, stars_count
     repo = new JSON.load open(url, "Authorization" => %{token #{ENV["GITHUB_TOKEN"]}})
     repo.new_stargazers_count = stars_count
@@ -68,10 +70,12 @@ class Repo < Hashie::Mash
     description.length > 280
   end
 
+  # Short blocklist entries ("ass", "ho", "kill") sit inside everyday words
+  # ("assistant", "Python", "skills"), so they only count as a token of their
+  # own. Longer entries still match anywhere, which catches compounds like
+  # "NiggerFoundation".
   def obscene?
-    [description, name, owner.login].any? { |text|
-      blocked_words.any? { |blocked| !!(text =~ /#{blocked}/i) }
-    }
+    [description, name, owner.login].any? { |text| obscene_text? text.to_s }
   end
 
   def malware?
@@ -84,6 +88,43 @@ class Repo < Hashie::Mash
   end
 
   private
+
+  def obscene_text? text
+    blocked_words.any? { |blocked|
+      if blocked.length >= OBSCENITY_SUBSTRING_MIN
+        !!(text =~ /#{Regexp.escape blocked}/i)
+      else
+        token_in? text, blocked
+      end
+    }
+  end
+
+  # A token is delimited by anything that isn't a letter ("91porn",
+  # "my_porn_site") or by a camelCase hump ("techGay").
+  def token_in? text, word
+    pattern = /#{Regexp.escape word}/i
+    position = 0
+
+    while (match = pattern.match text, position)
+      from, to = match.begin(0), match.end(0)
+      return true if token_start?(text, from) && token_end?(text, to)
+      position = from + 1
+    end
+
+    false
+  end
+
+  def token_start? text, from
+    from == 0 ||
+      text[from - 1] !~ /[[:alpha:]]/ ||
+      (text[from - 1] =~ /[[:lower:]]/ && text[from] =~ /[[:upper:]]/)
+  end
+
+  def token_end? text, to
+    to == text.length ||
+      text[to] !~ /[[:alpha:]]/ ||
+      (text[to - 1] =~ /[[:lower:]]/ && text[to] =~ /[[:upper:]]/)
+  end
 
   def blocked_github_repo_ids
     [156648725]

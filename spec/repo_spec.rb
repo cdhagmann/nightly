@@ -159,6 +159,36 @@ RSpec.describe Repo do
       repo.description = "Geohashes in proximity"
       expect(repo).not_to be_obscene
     end
+
+    it "is false when a short entry is only part of an everyday word" do
+      [
+        "Python tools for AI assistants",
+        "Agent skills for document analytics",
+        "A shell for the Hello World class",
+        "Title page standard"
+      ].each do |text|
+        repo.description = text
+        expect(repo).not_to be_obscene, "expected #{text.inspect} to be fine"
+      end
+    end
+
+    it "is true when a short entry stands alone as a word" do
+      ["porn viewer", "the-porn-app", "my_porn_site", "91porn", "techGay"].each do |text|
+        repo.description = text
+        expect(repo).to be_obscene, "expected #{text.inspect} to be obscene"
+      end
+    end
+
+    it "is true when a long entry is part of a compound" do
+      repo.name = "poopstainTracker"
+      expect(repo).to be_obscene
+    end
+
+    it "does not choke on a missing name" do
+      repo.name = nil
+      repo.description = "Geohashes in proximity"
+      expect(repo).not_to be_obscene
+    end
   end
 
   describe "#too_many_new_stars?" do
