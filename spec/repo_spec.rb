@@ -191,6 +191,37 @@ RSpec.describe Repo do
     end
   end
 
+  describe "#rejection_reason" do
+    def build_repo changes={}
+      Repo.new({
+        id: 1, name: "widget", description: "A perfectly fine project",
+        owner: {id: 2, login: "someone"}, stargazers_count: 10, new_stargazers_count: 10
+      }.merge(changes))
+    end
+
+    it "is nil when nothing is wrong" do
+      expect(build_repo.rejection_reason).to be_nil
+    end
+
+    it "names the check that failed" do
+      {
+        "blocked" => {id: 156648725},
+        "malware" => {description: "A free cheat for your game"},
+        "description too short" => {description: "Tiny"},
+        "description too long" => {description: "word " * 60},
+        "obscene" => {description: "A fine porn viewer"},
+        "too many new stars" => {new_stargazers_count: 11}
+      }.each do |reason, changes|
+        expect(build_repo(changes).rejection_reason).to eq(reason), "expected #{changes} to be #{reason}"
+      end
+    end
+
+    it "reports the first failing check" do
+      repo = build_repo id: 156648725, description: "A free cheat for your game"
+      expect(repo.rejection_reason).to eq "blocked"
+    end
+  end
+
   describe "#too_many_new_stars?" do
     it "is true when repo has more new stars than total stars" do
       repo.new_stargazers_count = 15

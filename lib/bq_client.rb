@@ -1,16 +1,12 @@
 require "json"
-require "big_query"
+require_relative "./rejection_log"
+require_relative "./repo"
 
 class BqClient
   attr_reader :bq, :day
-  def initialize day
+  def initialize day, bq=nil
     @day = day
-    @bq = BigQuery::Client.new({
-      "client_id"     => ENV.fetch("BQ_CLIENT_ID"),
-      "service_email" => ENV.fetch("BQ_SERVICE_EMAIL"),
-      "key"           => ENV.fetch("BQ_KEY", "bq-key.p12"),
-      "project_id"    => ENV.fetch("BQ_PROJECT_ID", "changelog-nightly")
-    })
+    @bq = bq || default_client
   end
 
   # `limit` is how many repos we want back; `max_lookups` caps GitHub API
@@ -26,6 +22,17 @@ class BqClient
 
   private
 
+  def default_client
+    require "big_query"
+
+    BigQuery::Client.new({
+      "client_id"     => ENV.fetch("BQ_CLIENT_ID"),
+      "service_email" => ENV.fetch("BQ_SERVICE_EMAIL"),
+      "key"           => ENV.fetch("BQ_KEY", "bq-key.p12"),
+      "project_id"    => ENV.fetch("BQ_PROJECT_ID", "changelog-nightly")
+    })
+  end
+
   def response_to_repo_list query_result, limit, max_lookups
     (query_result["rows"] || [])
       .map { |row| extract_fields_from_row row }
@@ -39,30 +46,17 @@ class BqClient
 
   def repo_from_row row
     repo = Repo.from_github row[:url], row[:count]
-    reason = rejection_reason repo
+    reason = repo.rejection_reason
 
     if reason
-      log_rejection row, reason
+      RejectionLog.skipped day, row[:url], row[:count], reason
       nil
     else
       repo
     end
   rescue => e
-    log_rejection row, "#{e.class}: #{e.message}"
+    RejectionLog.skipped day, row[:url], row[:count], "#{e.class}: #{e.message}"
     nil
-  end
-
-  def rejection_reason repo
-    return "blocked" if repo.blocked?
-    return "malware" if repo.malware? # run it again now that we have more info
-    return "description too short" if repo.description_too_short?
-    return "description too long" if repo.description_too_long?
-    return "obscene" if repo.obscene?
-    return "too many new stars" if repo.too_many_new_stars?
-  end
-
-  def log_rejection row, reason
-    $stderr.puts "[nightly] #{day} skipped #{row[:url]} (#{row[:count]} stars): #{reason}"
   end
 
   # each `row` hash has this format:

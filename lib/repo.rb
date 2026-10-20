@@ -87,6 +87,16 @@ class Repo < Hashie::Mash
     new_stargazers_count > stargazers_count
   end
 
+  # Why this repo shouldn't be listed, or nil when it should be.
+  def rejection_reason
+    return "blocked" if blocked?
+    return "malware" if malware? # run it again now that we have more info
+    return "description too short" if description_too_short?
+    return "description too long" if description_too_long?
+    return "obscene" if obscene?
+    return "too many new stars" if too_many_new_stars?
+  end
+
   private
 
   def obscene_text? text
