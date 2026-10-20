@@ -13,35 +13,56 @@ class BqClient
     })
   end
 
-  def top_all limit=50
-    response_to_repo_list bq.query(top_all_sql), limit
+  # `limit` is how many repos we want back; `max_lookups` caps GitHub API
+  # calls. Spam (often already deleted by GitHub) can crowd the top of the
+  # BigQuery results, so we keep looking until we have `limit` repos that pass.
+  def top_all limit=15, max_lookups=200
+    response_to_repo_list bq.query(top_all_sql), limit, max_lookups
   end
 
-  def top_new limit=50
-    response_to_repo_list bq.query(top_new_sql), limit
+  def top_new limit=15, max_lookups=200
+    response_to_repo_list bq.query(top_new_sql), limit, max_lookups
   end
 
   private
 
-  def response_to_repo_list query_result, limit
+  def response_to_repo_list query_result, limit, max_lookups
     (query_result["rows"] || [])
       .map { |row| extract_fields_from_row row }
       .reject { |row| row[:url].malware? } # run before GH API (rate limits)
-      .first(limit) # run before GH API (rate limits)
-      .map { |row|
-        begin
-          repo = Repo.from_github row[:url], row[:count]
-          next if repo.blocked?
-          next if repo.malware? # run it again now that we have more info
-          next if repo.description_too_short?
-          next if repo.description_too_long?
-          next if repo.obscene?
-          next if repo.too_many_new_stars?
-          repo
-        rescue
-          next
-        end
-      }.compact
+      .first(max_lookups) # run before GH API (rate limits)
+      .lazy
+      .map { |row| repo_from_row row }
+      .reject(&:nil?)
+      .first(limit)
+  end
+
+  def repo_from_row row
+    repo = Repo.from_github row[:url], row[:count]
+    reason = rejection_reason repo
+
+    if reason
+      log_rejection row, reason
+      nil
+    else
+      repo
+    end
+  rescue => e
+    log_rejection row, "#{e.class}: #{e.message}"
+    nil
+  end
+
+  def rejection_reason repo
+    return "blocked" if repo.blocked?
+    return "malware" if repo.malware? # run it again now that we have more info
+    return "description too short" if repo.description_too_short?
+    return "description too long" if repo.description_too_long?
+    return "obscene" if repo.obscene?
+    return "too many new stars" if repo.too_many_new_stars?
+  end
+
+  def log_rejection row, reason
+    $stderr.puts "[nightly] #{day} skipped #{row[:url]} (#{row[:count]} stars): #{reason}"
   end
 
   # each `row` hash has this format:
