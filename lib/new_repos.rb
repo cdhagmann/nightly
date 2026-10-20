@@ -11,21 +11,29 @@ require_relative "./repo"
 #
 # Stars are the repo's total at the time we ask. For a repo created today
 # that is today's stars, give or take the last few hours.
+#
+# New repos are where spam concentrates, and the keyword checks alone let it
+# through ("pre-activated" software lures, FPS "optimizers"), so this list also
+# screens on how the repos and their owners look, not just what they say.
 class NewRepos
   MIN_STARS = 10
   PAGES = 3
+  CLUSTER_SIZE = 4
 
   attr_reader :day, :github
 
   def initialize day, github=GitHub.new
     @day = day
     @github = github
+    @accounts = {}
   end
 
-  def top limit=15
-    candidates
+  # `max_lookups` caps the owner lookups, one GitHub API call each.
+  def top limit=15, max_lookups=200
+    drop_clusters(candidates.select { |repo| acceptable? repo })
+      .first(max_lookups)
       .lazy
-      .select { |repo| acceptable? repo }
+      .select { |repo| trustworthy_account? repo }
       .first(limit)
   end
 
@@ -39,7 +47,43 @@ class NewRepos
 
   def acceptable? repo
     reason = repo.rejection_reason
-    RejectionLog.skipped day, repo.html_url, repo.stargazers_count, reason if reason
+    skip repo, reason if reason
     reason.nil?
+  end
+
+  # Spam factories stamp out repos that look alike: the same number of stars
+  # (they buy a fixed batch) on the same amount of code. Real projects rarely
+  # collide on both, so a group of lookalikes is dropped as a whole.
+  def drop_clusters repos
+    counts = Hash.new(0)
+    repos.each { |repo| counts[signature repo] += 1 }
+
+    repos.reject { |repo|
+      lookalikes = counts[signature repo]
+      skip repo, "one of #{lookalikes} lookalike repos" if lookalikes >= CLUSTER_SIZE
+      lookalikes >= CLUSTER_SIZE
+    }
+  end
+
+  def signature repo
+    [repo.stargazers_count, repo[:size].to_i / 2]
+  end
+
+  def trustworthy_account? repo
+    reason = repo.account_rejection_reason account_for(repo)
+    skip repo, reason if reason
+    reason.nil?
+  rescue => e
+    skip repo, "#{e.class}: #{e.message}"
+    false
+  end
+
+  def account_for repo
+    login = repo.owner.login
+    @accounts[login] ||= Hashie::Mash.new github.user(login)
+  end
+
+  def skip repo, reason
+    RejectionLog.skipped day, repo.html_url, repo.stargazers_count, reason
   end
 end

@@ -204,6 +204,87 @@ RSpec.describe Repo do
     end
   end
 
+  describe "account checks" do
+    let(:now) { Time.utc 2026, 10, 20 }
+    let(:repo) { Repo.new name: "widget", size: 5000, topics: [] }
+
+    def account attrs={}
+      Hashie::Mash.new({followers: 50, public_repos: 40, created_at: "2015-01-01T00:00:00Z"}.merge(attrs))
+    end
+
+    describe "#throwaway_account?" do
+      it "is true for a new account nobody follows" do
+        expect(repo.throwaway_account?(account(followers: 0, created_at: "2026-10-01T00:00:00Z"), now)).to be true
+      end
+
+      it "is true for a few repos, no followers, and almost nothing in this one" do
+        repo.size = 10
+        expect(repo.throwaway_account?(account(followers: 0, public_repos: 3), now)).to be true
+      end
+
+      it "is false when this repo has real content" do
+        expect(repo.throwaway_account?(account(followers: 0, public_repos: 3), now)).to be false
+      end
+
+      it "is false when somebody follows the account" do
+        expect(repo.throwaway_account?(account(followers: 1, created_at: "2026-10-19T00:00:00Z"), now)).to be false
+      end
+
+      it "is false for an old account with many repos" do
+        expect(repo.throwaway_account?(account(followers: 0), now)).to be false
+      end
+
+      it "does not judge an account whose age is unknown" do
+        expect(repo.throwaway_account?(account(followers: 0, created_at: nil), now)).to be false
+      end
+    end
+
+    describe "#established_account?" do
+      it "is true with five followers" do
+        expect(repo.established_account?(account(followers: 5, created_at: "2026-10-19T00:00:00Z"), now)).to be true
+      end
+
+      it "is true after a year even with no followers" do
+        expect(repo.established_account?(account(followers: 0, created_at: "2025-10-01T00:00:00Z"), now)).to be true
+      end
+
+      it "is false when both are short" do
+        expect(repo.established_account?(account(followers: 4, created_at: "2026-01-01T00:00:00Z"), now)).to be false
+      end
+    end
+
+    describe "#suspicious_topics?" do
+      it "is true when a topic is on the malware list" do
+        repo.topics = %w(scholarship free-tuition)
+        expect(repo).to be_suspicious_topics
+      end
+
+      it "is false otherwise, or with no topics" do
+        repo.topics = %w(ruby cli)
+        expect(repo).not_to be_suspicious_topics
+        expect(Repo.new).not_to be_suspicious_topics
+      end
+    end
+
+    describe "#account_rejection_reason" do
+      it "prefers the throwaway reason" do
+        repo.topics = %w(free-tuition)
+        reason = repo.account_rejection_reason account(followers: 0, created_at: "2026-10-19T00:00:00Z"), now
+        expect(reason).to eq "throwaway account"
+      end
+
+      it "flags suspicious topics only on accounts that are not established" do
+        repo.topics = %w(free-tuition)
+        expect(repo.account_rejection_reason(account(followers: 2, created_at: "2026-02-01T00:00:00Z"), now)).to eq "suspicious topics"
+        expect(repo.account_rejection_reason(account, now)).to be_nil
+      end
+
+      it "is nil for a clean repo from a clean account" do
+        expect(repo.account_rejection_reason(account, now)).to be_nil
+      end
+    end
+  end
+
   describe "#rejection_reason" do
     def build_repo changes={}
       Repo.new({

@@ -4,10 +4,16 @@ require "yaml"
 require "obscenity"
 require "whatlanguage"
 require "open-uri"
+require "time"
 require_relative "./core_ext/string"
 
 class Repo < Hashie::Mash
   OBSCENITY_SUBSTRING_MIN = 5
+  THROWAWAY_ACCOUNT_DAYS = 30
+  THROWAWAY_MAX_REPOS = 3
+  TINY_REPO_KB = 50
+  ESTABLISHED_FOLLOWERS = 5
+  ESTABLISHED_ACCOUNT_DAYS = 365
 
   def self.from_github url, stars_count
     from_api JSON.load(open(url, "Authorization" => %{token #{ENV["GITHUB_TOKEN"]}})), stars_count
@@ -91,6 +97,34 @@ class Repo < Hashie::Mash
     new_stargazers_count > stargazers_count
   end
 
+  # Spam factories sell stars to accounts that exist to push a repo: nobody
+  # follows them, and they are either days old or hold a handful of repos with
+  # this one barely containing anything. `account` is the /users/:login payload.
+  def throwaway_account? account, now=Time.now
+    return false unless account.followers.to_i == 0
+
+    account_age_days(account, now) < THROWAWAY_ACCOUNT_DAYS ||
+      (account.public_repos.to_i <= THROWAWAY_MAX_REPOS && self[:size].to_i < TINY_REPO_KB)
+  end
+
+  def established_account? account, now=Time.now
+    account.followers.to_i >= ESTABLISHED_FOLLOWERS ||
+      account_age_days(account, now) >= ESTABLISHED_ACCOUNT_DAYS
+  end
+
+  # Topics the malware list objects to ("free-tuition", "cracked").
+  def suspicious_topics?
+    (topics || []).any?(&:malware?)
+  end
+
+  # Why the account behind this repo makes it look like spam, or nil. Topics
+  # alone hit real projects (a "roblox" tagged tool), so they only count
+  # against accounts that haven't established themselves.
+  def account_rejection_reason account, now=Time.now
+    return "throwaway account" if throwaway_account? account, now
+    return "suspicious topics" if suspicious_topics? && !established_account?(account, now)
+  end
+
   # Why this repo shouldn't be listed, or nil when it should be.
   def rejection_reason
     return "blocked" if blocked?
@@ -103,6 +137,12 @@ class Repo < Hashie::Mash
   end
 
   private
+
+  def account_age_days account, now
+    return ESTABLISHED_ACCOUNT_DAYS unless account.created_at # unknown: don't judge by age
+
+    ((now - Time.parse(account.created_at)) / 86_400).floor
+  end
 
   def obscene_text? text
     blocked_words.any? { |blocked|
